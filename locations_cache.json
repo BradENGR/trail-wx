@@ -1,0 +1,34 @@
+{
+  "newfound-gap": {
+    "office": "GSP",
+    "grid_x": 24,
+    "grid_y": 73,
+    "grid_elevation_ft": 5177.0,
+    "radar_id": "KMRX",
+    "station_id": "K24A"
+  },
+  "pecks-corner-shelter": {
+    "office": "GSP",
+    "grid_x": 28,
+    "grid_y": 75,
+    "grid_elevation_ft": 5092.0,
+    "radar_id": "KMRX",
+    "station_id": "K24A"
+  },
+  "cosby-knob-shelter": {
+    "office": "GSP",
+    "grid_x": 32,
+    "grid_y": 79,
+    "grid_elevation_ft": 4997.0,
+    "radar_id": "KMRX",
+    "station_id": "K24A"
+  },
+  "pigeon-river-bridge": {
+    "office": "GSP",
+    "grid_x": 35,
+    "grid_y": 81,
+    "grid_elevation_ft": 1601.0,
+    "radar_id": "KMRX",
+    "station_id": "K24A"
+  }
+}

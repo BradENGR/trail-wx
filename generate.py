@@ -1,0 +1,424 @@
+import sys
+import re
+import json
+import yaml
+import requests
+from html import escape
+from pathlib import Path
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+from concurrent.futures import ThreadPoolExecutor
+
+EASTERN = ZoneInfo("America/New_York")
+
+UA = "trail-wx/1.0 (https://github.com/BradENGR/trail-wx/issues)"
+LAPSE_RATE = 3.5  # °F per 1000 ft
+
+
+# ── NWS API helpers ────────────────────────────────────────────────────────────
+
+def nws_get(url):
+    r = requests.get(url, headers={"User-Agent": UA}, timeout=15)
+    r.raise_for_status()
+    return r.json()
+
+
+def load_location_cache():
+    path = Path("locations_cache.json")
+    if not path.exists():
+        raise FileNotFoundError("locations_cache.json not found — run cache.py first")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def get_grid_temp_values(office, grid_x, grid_y):
+    try:
+        data = nws_get(
+            f"https://api.weather.gov/gridpoints/{office}/{grid_x},{grid_y}"
+        )["properties"]
+        return (data.get("temperature") or {}).get("values", [])
+    except Exception as e:
+        print(f"  WARN grid temp: {e}", file=sys.stderr)
+        return []
+
+
+def get_forecast(forecast_url):
+    try:
+        return nws_get(forecast_url)["properties"]["periods"]
+    except Exception as e:
+        print(f"  WARN forecast: {e}", file=sys.stderr)
+        return None
+
+
+def get_alerts(lat, lon):
+    try:
+        return nws_get(f"https://api.weather.gov/alerts/active?point={lat},{lon}")["features"]
+    except Exception as e:
+        print(f"  WARN alerts: {e}", file=sys.stderr)
+        return []
+
+
+def get_observations(station_id):
+    try:
+        return nws_get(
+            f"https://api.weather.gov/stations/{station_id}/observations/latest"
+        )["properties"]
+    except Exception as e:
+        print(f"  WARN observations: {e}", file=sys.stderr)
+        return None
+
+
+def get_current_grid_temp_c(temp_values, now_utc):
+    """Return grid temperature (°C) for the interval containing now_utc, or None."""
+    for entry in temp_values:
+        try:
+            valid_str, dur_str = entry["validTime"].split("/")
+            start = datetime.fromisoformat(valid_str)
+            m = re.match(r'PT(\d+(?:\.\d+)?)H', dur_str)
+            hours = float(m.group(1)) if m else 1.0
+            if start <= now_utc < start + timedelta(hours=hours):
+                return entry.get("value")
+        except Exception:
+            continue
+    return None
+
+
+# ── Temperature helpers ────────────────────────────────────────────────────────
+
+def compute_temp_offset(grid_elev_ft, location_elev_ft):
+    return -((location_elev_ft - grid_elev_ft) / 1000.0) * LAPSE_RATE
+
+
+def adjust_temps_in_text(text, offset):
+    # Optionally capture NWS leadup phrase ("high near", "low around", etc.)
+    # then the temperature integer 30-100, excluding unit-suffixed numbers.
+    pattern = (
+        r'((?:(?:high|low|temperatures?)\s+(?:near|around|of)|(?:near|around))\s+)?'
+        r'(\b(?:[3-9]\d|100)\b)'
+        r'(?!\s*(?:mph|percent|%|kt|knots|inches?|mm|cm|mb|hpa))'
+    )
+
+    def replacer(m):
+        prefix = m.group(1) or ""
+        val = int(m.group(2))
+        adj = round(val + offset)
+        if adj == val:
+            return f'<strong>{prefix}{val}</strong>'
+        return f'<strong>{prefix}{adj}</strong><span class="orig">({val})</span>'
+
+    return re.sub(pattern, replacer, text, flags=re.IGNORECASE)
+
+
+def adjust_period_temp(temp, temp_unit, offset):
+    """Returns (adjusted_str, original) or (raw_str, None)."""
+    if temp is None:
+        return "—", None
+    if temp_unit == "F" and 30 <= temp <= 100:
+        adj = round(temp + offset)
+        return str(adj), temp
+    return str(temp), None
+
+
+# ── Unit conversions ───────────────────────────────────────────────────────────
+
+def c_to_f(c):
+    return c * 9 / 5 + 32 if c is not None else None
+
+
+def mps_to_mph(mps):
+    return round(mps * 2.237) if mps is not None else None
+
+
+def deg_to_compass(deg):
+    if deg is None:
+        return ""
+    dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+            "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+    return dirs[round(deg / 22.5) % 16]
+
+
+def safe_url(url):
+    if url and re.match(r'^https?://', str(url)):
+        return url
+    return "#"
+
+
+def valid_radar_id(radar_id):
+    return bool(radar_id and re.match(r'^K[A-Z]{3}$', str(radar_id)))
+
+
+# ── HTML rendering ─────────────────────────────────────────────────────────────
+
+CSS = """\
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,sans-serif;font-size:14px;line-height:1.45;max-width:500px;margin:0 auto;padding:10px}
+a{color:inherit}
+h1{font-size:17px;margin-bottom:2px}
+.meta{font-size:11px;color:#888;margin-bottom:10px}
+.alerts{margin-bottom:10px}
+.alert{border:1px solid;border-radius:3px;padding:5px 8px;margin-bottom:4px}
+.alert a{font-weight:700;text-decoration:none;display:block}
+.obs{border-left:3px solid #4a8;padding:5px 8px;margin-bottom:10px;font-size:13px}
+.obs-row{display:flex;flex-wrap:wrap;gap:12px}
+.periods{margin-bottom:10px}
+.period{border-radius:3px;padding:6px 8px;margin-bottom:4px}
+.period-head{display:flex;justify-content:space-between;align-items:baseline}
+.period-name{font-weight:700;font-size:13px}
+.period-temp{font-weight:700}
+.period-text{font-size:12px;margin-top:3px}
+.orig{font-size:10px;margin-left:2px}
+.radar{margin-bottom:8px}
+.radar img{max-width:100%;border-radius:3px;display:block}
+.radar-link{font-size:11px;margin-top:2px}
+.gen{font-size:10px;margin-top:8px}
+@media(prefers-color-scheme:light){
+  body{background:#fff;color:#111}
+  .alert{background:#fff8e1;border-color:#e6a817}
+  .period{background:#f6f6f6}
+  .orig{color:#888}
+}
+@media(prefers-color-scheme:dark){
+  body{background:#111;color:#ddd}
+  a{color:#7ab8f5}
+  .alert{background:#2d1a00;border-color:#c87}
+  .period{background:#1e1e1e}
+  .orig{color:#777}
+  .obs{border-color:#4a8}
+}
+"""
+
+INDEX_CSS = """\
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,sans-serif;font-size:14px;line-height:1.6;max-width:400px;margin:0 auto;padding:16px}
+h1{font-size:18px;margin-bottom:12px}
+ul{list-style:none}
+li{padding:6px 0;border-bottom:1px solid}
+a{text-decoration:none;font-weight:600}
+a:hover{text-decoration:underline}
+.elev{font-size:11px;margin-left:6px}
+.gen{font-size:10px;margin-top:14px}
+@media(prefers-color-scheme:light){
+  body{background:#fff;color:#111}
+  li{border-color:#e8e8e8}
+  a{color:#1a6ab0}
+  .elev{color:#888}
+}
+@media(prefers-color-scheme:dark){
+  body{background:#111;color:#ddd}
+  li{border-color:#333}
+  a{color:#7ab8f5}
+  .elev{color:#777}
+}
+"""
+
+
+def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, current_temp_f, radar_id, generated_at):
+    name = escape(loc["name"])
+    elev_ft = loc["elevation_ft"]
+    if not valid_radar_id(radar_id):
+        radar_id = ""
+    ts = generated_at.astimezone(EASTERN).strftime("%Y-%m-%d %H:%M %Z")
+
+    # ── alerts ──
+    alerts_html = ""
+    if alerts:
+        items = []
+        for a in alerts:
+            p = a.get("properties", {})
+            event = escape(p.get("event", "Alert"))
+            url = escape(safe_url(p.get("url")))
+            items.append(f'<div class="alert"><a href="{url}">{event}</a></div>')
+        alerts_html = f'<div class="alerts">{"".join(items)}</div>\n'
+
+    # ── observations ──
+    obs_html = ""
+    parts = []
+    parts.append(
+        f'<span>Temp: <b>{current_temp_f}°F</b></span>'
+        if current_temp_f is not None else
+        '<span>Temp: <b>—</b></span>'
+    )
+    if obs:
+        wind_mph = mps_to_mph((obs.get("windSpeed") or {}).get("value"))
+        wind_dir = deg_to_compass((obs.get("windDirection") or {}).get("value"))
+        if wind_mph is not None:
+            parts.append(f'<span>Wind: <b>{wind_dir} {wind_mph} mph</b></span>')
+        sky = escape(obs.get("textDescription", "").strip())
+        if sky:
+            parts.append(f'<span>Sky: <b>{sky}</b></span>')
+    if parts:
+        obs_html = f'<div class="obs"><div class="obs-row">{"".join(parts)}</div></div>\n'
+
+    # ── forecast periods ──
+    if periods:
+        period_items = []
+        for p in periods[:3]:
+            pname = escape(p.get("name", ""))
+            temp = p.get("temperature")
+            unit = p.get("temperatureUnit", "F")
+            detail = escape(p.get("detailedForecast") or p.get("shortForecast", ""))
+
+            adj_temp, orig_temp = adjust_period_temp(temp, unit, temp_offset)
+            if orig_temp is not None and str(orig_temp) != adj_temp:
+                temp_html = f'<strong>{adj_temp}</strong><span class="orig">({orig_temp})</span>°F'
+            elif orig_temp is not None:
+                temp_html = f'<strong>{adj_temp}</strong>°F'
+            else:
+                temp_html = f"{adj_temp}°{escape(unit)}"
+
+            adj_detail = adjust_temps_in_text(detail, temp_offset)
+            period_items.append(
+                f'<div class="period">'
+                f'<div class="period-head">'
+                f'<span class="period-name">{pname}</span>'
+                f'<span class="period-temp">{temp_html}</span>'
+                f'</div>'
+                f'<div class="period-text">{adj_detail}</div>'
+                f'</div>'
+            )
+        periods_html = f'<div class="periods">{"".join(period_items)}</div>\n'
+    else:
+        periods_html = '<div class="periods"><p>Forecast data unavailable.</p></div>\n'
+
+    # ── radar ──
+    radar_html = ""
+    if radar_id:
+        img_url = f"https://radar.weather.gov/ridge/standard/{radar_id}_0.gif"
+        stn_url = f"https://radar.weather.gov/station/{radar_id}"
+        radar_html = (
+            f'<div class="radar">'
+            f'<img src="{img_url}" alt="Radar {radar_id}">'
+            f'<div class="radar-link"><a href="{stn_url}">Full radar: {radar_id}</a></div>'
+            f'</div>\n'
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{name} — AT Weather</title>
+<style>{CSS}</style>
+</head>
+<body>
+<h1>{name}</h1>
+<div class="meta">{elev_ft:,} ft &bull; Grid: {round(grid_elev_ft):,} ft &bull; Adj: {round(temp_offset):+d}&deg;F &bull; <a href="index.html">All locations</a></div>
+{alerts_html}{obs_html}{periods_html}{radar_html}<div class="gen">Updated: {ts}</div>
+</body>
+</html>"""
+
+
+def render_index(locations, generated_at):
+    ts = generated_at.astimezone(EASTERN).strftime("%Y-%m-%d %H:%M %Z")
+    items = "".join(
+        f'<li><a href="{loc["id"]}.html">{escape(loc["name"])}</a>'
+        f'<span class="elev">{loc["elevation_ft"]:,} ft</span></li>'
+        for loc in locations
+    )
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AT Weather</title>
+<style>{INDEX_CSS}</style>
+</head>
+<body>
+<h1>AT Weather</h1>
+<ul>{items}</ul>
+<div class="gen">Updated: {ts}</div>
+</body>
+</html>"""
+
+
+# ── Build worker ──────────────────────────────────────────────────────────────
+
+def build_location(loc, cached, generated_at, out_dir):
+    lat, lon    = loc["lat"], loc["lon"]
+    office      = cached["office"]
+    grid_x      = cached["grid_x"]
+    grid_y      = cached["grid_y"]
+    grid_elev_ft = cached["grid_elevation_ft"]
+    radar_id    = cached.get("radar_id", "")
+    station_id  = cached.get("station_id")
+
+    temp_offset = compute_temp_offset(grid_elev_ft, loc["elevation_ft"])
+
+    grid_temp_values = get_grid_temp_values(office, grid_x, grid_y)
+    grid_temp_c  = get_current_grid_temp_c(grid_temp_values, generated_at)
+    current_temp_f = round(c_to_f(grid_temp_c) + temp_offset) if grid_temp_c is not None else None
+
+    forecast_url = f"https://api.weather.gov/gridpoints/{office}/{grid_x},{grid_y}/forecast"
+    periods = get_forecast(forecast_url)
+    alerts  = get_alerts(lat, lon)
+    obs     = get_observations(station_id) if station_id else None
+
+    page_html = render_location(
+        loc, periods, alerts, obs,
+        temp_offset, grid_elev_ft, current_temp_f, radar_id, generated_at,
+    )
+    out_path = out_dir / f"{loc['id']}.html"
+    out_path.write_text(page_html, encoding="utf-8")
+    print(f"  -> {out_path}")
+    return loc
+
+
+# ── Main ───────────────────────────────────────────────────────────────────────
+
+def main():
+    with open("locations.yaml") as f:
+        config = yaml.safe_load(f)
+    locations = config["locations"]
+
+    out_dir = Path("docs")
+    out_dir.mkdir(exist_ok=True)
+
+    generated_at = datetime.now(timezone.utc)
+
+    try:
+        cache = load_location_cache()
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate and collect work items sequentially before launching threads
+    work_items = []
+    errors = 0
+    for loc in locations:
+        loc_id = loc.get("id", "")
+        if not re.match(r'^[a-z0-9][a-z0-9-]*$', str(loc_id)):
+            print(f"SKIP invalid id {loc_id!r}", file=sys.stderr)
+            errors += 1
+            continue
+        cached = cache.get(loc_id)
+        if not cached:
+            print(f"ERROR no cache entry for {loc_id!r} — run cache.py first", file=sys.stderr)
+            errors += 1
+            continue
+        print(f"Building {loc['name']}...")
+        work_items.append((loc, cached))
+
+    # Fetch live data for all locations in parallel
+    built_locations = []
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [
+            executor.submit(build_location, loc, cached, generated_at, out_dir)
+            for loc, cached in work_items
+        ]
+        for future in futures:
+            try:
+                built_locations.append(future.result())
+            except Exception as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                errors += 1
+
+    index_html = render_index(built_locations, generated_at)
+    (out_dir / "index.html").write_text(index_html, encoding="utf-8")
+    print("  -> docs/index.html")
+
+    if errors:
+        print(f"\n{errors} location(s) failed.", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,28 @@
+locations:
+  - id: newfound-gap
+    name: Newfound Gap
+    lat: 35.611002
+    lon: -83.422888
+    elevation_ft: 5046
+
+
+  - id: pecks-corner-shelter
+    name: Pecks Corner Shelter
+    lat: 35.65083
+    lon: -83.30848
+    elevation_ft: 5281
+
+
+  - id: cosby-knob-shelter
+    name: Cosby Knob Shelter
+    lat: 35.72828
+    lon: -83.18219
+    elevation_ft: 4723
+
+
+  - id: pigeon-river-bridge
+    name: Pigeon River Bridge
+    lat: 35.775598
+    lon: -83.098306
+    elevation_ft: 1357
+
