@@ -296,7 +296,7 @@ def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, curren
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{name} — AT Weather</title>
+<title>{name} — Trail Weather</title>
 <style>{CSS}</style>
 </head>
 <body>
@@ -319,11 +319,11 @@ def render_index(locations, generated_at):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AT Weather</title>
+<title>Trail Weather</title>
 <style>{INDEX_CSS}</style>
 </head>
 <body>
-<h1>AT Weather</h1>
+<h1>Trail Weather</h1>
 <ul>{items}</ul>
 <div class="gen">Updated: {ts}</div>
 </body>
