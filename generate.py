@@ -151,13 +151,44 @@ def alert_web_url(params):
     return None
 
 
-def first_sentence(text):
-    """Return the first sentence of text with internal whitespace collapsed."""
+def alert_split(text, max_chars=80):
+    """Return (snip_escaped, rest_html) split at first sentence or word boundary.
+
+    snip: escaped text up to the cut point (no ellipsis — caller adds it via CSS)
+    rest_html: escaped remainder with paragraph breaks as <br><br>, or "" if fits in snip
+    """
     if not text:
-        return ""
-    collapsed = " ".join(text.split())
+        return "", ""
+    paragraphs = [" ".join(p.split()) for p in text.split("\n\n") if p.strip()]
+    collapsed = " ".join(paragraphs)
+    if not collapsed:
+        return "", ""
+
     dot = collapsed.find(". ")
-    return collapsed[:dot + 1] if 0 < dot < 200 else collapsed[:150]
+    if 0 < dot <= max_chars:
+        cut = dot + 1
+    elif len(collapsed) <= max_chars:
+        return escape(collapsed), ""
+    else:
+        space = collapsed[:max_chars].rfind(" ")
+        cut = space if space > 0 else max_chars
+
+    snip = escape(collapsed[:cut])
+
+    # Rebuild rest with paragraph breaks intact
+    rest_parts = []
+    pos = 0
+    for para in paragraphs:
+        end = pos + len(para)
+        if cut <= pos:
+            rest_parts.append(escape(para))
+        elif cut < end:
+            remainder = para[cut - pos:].lstrip()
+            if remainder:
+                rest_parts.append(escape(remainder))
+        pos = end + 1  # +1 for the joining space between paragraphs in collapsed
+    rest_html = "<br><br>".join(rest_parts)
+    return snip, rest_html
 
 
 def valid_radar_id(radar_id):
@@ -175,7 +206,15 @@ h1{font-size:17px;margin-bottom:2px}
 .alerts{margin-bottom:10px}
 .alert{border:1px solid;border-radius:3px;padding:5px 8px;margin-bottom:4px}
 .alert a{font-weight:700;text-decoration:none;display:block}
-.alert-summary{font-size:11px;margin-top:3px;opacity:0.75}
+.alert-det{margin-top:3px}
+.alert-snip{font-size:11px;margin-top:3px;opacity:0.75}
+.alert-det summary{font-size:11px;opacity:0.75;cursor:pointer;list-style:none;line-height:1.5}
+.alert-det summary::-webkit-details-marker{display:none}
+.alert-det summary::before{content:"▸ ";font-size:9px}
+.alert-det[open] summary::before{content:"▾ "}
+.alert-rest{display:none}
+.alert-det[open] .alert-ell{display:none}
+.alert-det[open] .alert-rest{display:inline}
 .obs{border-left:3px solid #4a8;padding:5px 8px;margin-bottom:10px;font-size:13px}
 .obs-row{display:flex;flex-wrap:wrap;gap:12px}
 .periods{margin-bottom:10px}
@@ -246,9 +285,22 @@ def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, curren
             params = p.get("parameters", {})
             event = escape(p.get("event", "Alert"))
             url = escape(safe_url(alert_web_url(params)))
-            summary = escape(first_sentence(p.get("description") or ""))
-            summary_html = f'<div class="alert-summary">{summary}</div>' if summary else ""
-            items.append(f'<div class="alert"><a href="{url}">{event}</a>{summary_html}</div>')
+            desc = p.get("description") or ""
+            snip, rest = alert_split(desc)
+            if snip and rest:
+                detail_html = (
+                    f'<details class="alert-det">'
+                    f'<summary>{snip}'
+                    f'<span class="alert-ell"> …</span>'
+                    f'<span class="alert-rest"> {rest}</span>'
+                    f'</summary>'
+                    f'</details>'
+                )
+            elif snip:
+                detail_html = f'<div class="alert-snip">{snip}</div>'
+            else:
+                detail_html = ""
+            items.append(f'<div class="alert"><a href="{url}">{event}</a>{detail_html}</div>')
         alerts_html = f'<div class="alerts">{"".join(items)}</div>\n'
 
     # ── observations ──
