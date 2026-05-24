@@ -142,6 +142,24 @@ def safe_url(url):
     return "#"
 
 
+def alert_web_url(params):
+    """Build a human-readable NWS text-product URL from AWIPSidentifier, or return None."""
+    awips = (params.get("AWIPSidentifier") or [""])[0]
+    if len(awips) == 6:
+        product, office = awips[:3].upper(), awips[3:].upper()
+        return f"https://forecast.weather.gov/product.php?site=NWS&issuedby={office}&product={product}&format=CI&version=1&glossary=0"
+    return None
+
+
+def first_sentence(text):
+    """Return the first sentence of text with internal whitespace collapsed."""
+    if not text:
+        return ""
+    collapsed = " ".join(text.split())
+    dot = collapsed.find(". ")
+    return collapsed[:dot + 1] if 0 < dot < 200 else collapsed[:150]
+
+
 def valid_radar_id(radar_id):
     return bool(radar_id and re.match(r'^K[A-Z]{3}$', str(radar_id)))
 
@@ -157,6 +175,7 @@ h1{font-size:17px;margin-bottom:2px}
 .alerts{margin-bottom:10px}
 .alert{border:1px solid;border-radius:3px;padding:5px 8px;margin-bottom:4px}
 .alert a{font-weight:700;text-decoration:none;display:block}
+.alert-summary{font-size:11px;margin-top:3px;opacity:0.75}
 .obs{border-left:3px solid #4a8;padding:5px 8px;margin-bottom:10px;font-size:13px}
 .obs-row{display:flex;flex-wrap:wrap;gap:12px}
 .periods{margin-bottom:10px}
@@ -224,9 +243,12 @@ def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, curren
         items = []
         for a in alerts:
             p = a.get("properties", {})
+            params = p.get("parameters", {})
             event = escape(p.get("event", "Alert"))
-            url = escape(safe_url(p.get("url")))
-            items.append(f'<div class="alert"><a href="{url}">{event}</a></div>')
+            url = escape(safe_url(alert_web_url(params)))
+            summary = escape(first_sentence(p.get("description") or ""))
+            summary_html = f'<div class="alert-summary">{summary}</div>' if summary else ""
+            items.append(f'<div class="alert"><a href="{url}">{event}</a>{summary_html}</div>')
         alerts_html = f'<div class="alerts">{"".join(items)}</div>\n'
 
     # ── observations ──
