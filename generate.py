@@ -224,7 +224,16 @@ h1{font-size:17px;margin-bottom:2px}
 .period-temp{font-weight:700}
 .period-text{font-size:12px;margin-top:3px}
 .orig{font-size:10px;margin-left:2px}
-.radar{margin-bottom:8px}
+.more-periods{margin-bottom:4px}
+.more-periods summary{font-size:12px;opacity:0.7;cursor:pointer;list-style:none;padding:3px 0}
+.more-periods summary::-webkit-details-marker{display:none}
+.more-periods summary::before{content:"▸ ";font-size:9px}
+.more-periods[open] summary::before{content:"▾ "}
+.radar-det{margin-bottom:8px}
+.radar-det summary{font-size:12px;cursor:pointer;list-style:none;margin-bottom:6px}
+.radar-det summary::-webkit-details-marker{display:none}
+.radar-det summary::before{content:"▸ ";font-size:9px}
+.radar-det[open] summary::before{content:"▾ "}
 .radar img{max-width:100%;border-radius:3px;display:block}
 .radar-link{font-size:11px;margin-top:2px}
 .gen{font-size:10px;margin-top:8px}
@@ -324,13 +333,12 @@ def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, curren
 
     # ── forecast periods ──
     if periods:
-        period_items = []
-        for p in periods[:3]:
+        all_items = []
+        for p in periods:
             pname = escape(p.get("name", ""))
             temp = p.get("temperature")
             unit = p.get("temperatureUnit", "F")
             detail = escape(p.get("detailedForecast") or p.get("shortForecast", ""))
-
             adj_temp, orig_temp = adjust_period_temp(temp, unit, temp_offset)
             if orig_temp is not None and str(orig_temp) != adj_temp:
                 temp_html = f'<strong>{adj_temp}</strong><span class="orig">({orig_temp})</span>°F'
@@ -338,9 +346,8 @@ def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, curren
                 temp_html = f'<strong>{adj_temp}</strong>°F'
             else:
                 temp_html = f"{adj_temp}°{escape(unit)}"
-
             adj_detail = adjust_temps_in_text(detail, temp_offset)
-            period_items.append(
+            all_items.append(
                 f'<div class="period">'
                 f'<div class="period-head">'
                 f'<span class="period-name">{pname}</span>'
@@ -349,7 +356,19 @@ def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, curren
                 f'<div class="period-text">{adj_detail}</div>'
                 f'</div>'
             )
-        periods_html = f'<div class="periods">{"".join(period_items)}</div>\n'
+        shown = "".join(all_items[:2])
+        extra = all_items[2:]
+        if extra:
+            n = len(extra)
+            more = (
+                f'<details class="more-periods">'
+                f'<summary>{n} more period{"s" if n != 1 else ""}</summary>'
+                f'{"".join(extra)}'
+                f'</details>'
+            )
+        else:
+            more = ""
+        periods_html = f'<div class="periods">{shown}{more}</div>\n'
     else:
         periods_html = '<div class="periods"><p>Forecast data unavailable.</p></div>\n'
 
@@ -359,10 +378,13 @@ def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, curren
         img_url = f"https://radar.weather.gov/ridge/standard/{radar_id}_0.gif"
         stn_url = f"https://radar.weather.gov/station/{radar_id}"
         radar_html = (
+            f'<details class="radar-det">'
+            f'<summary>Radar: {radar_id}</summary>'
             f'<div class="radar">'
-            f'<img src="{img_url}" alt="Radar {radar_id}">'
+            f'<img src="{img_url}" alt="Radar {radar_id}" loading="lazy">'
             f'<div class="radar-link"><a href="{stn_url}">Full radar: {radar_id}</a></div>'
-            f'</div>\n'
+            f'</div>'
+            f'</details>\n'
         )
 
     return f"""<!DOCTYPE html>
