@@ -1,3 +1,4 @@
+import os
 import sys
 import re
 import json
@@ -65,6 +66,19 @@ def get_observations(station_id):
     except Exception as e:
         print(f"  WARN observations: {e}", file=sys.stderr)
         return None
+
+
+def get_park_alerts(park_code, api_key):
+    if not park_code or not api_key:
+        return []
+    try:
+        url = f"https://developer.nps.gov/api/v1/alerts?parkCode={park_code}&api_key={api_key}"
+        r = requests.get(url, headers={"User-Agent": UA}, timeout=15)
+        r.raise_for_status()
+        return r.json().get("data", [])
+    except Exception as e:
+        print(f"  WARN park alerts ({park_code}): {e}", file=sys.stderr)
+        return []
 
 
 def get_current_grid_temp_c(temp_values, now_utc):
@@ -195,6 +209,12 @@ def valid_radar_id(radar_id):
     return bool(radar_id and re.match(r'^K[A-Z]{3}$', str(radar_id)))
 
 
+PARK_ALERT_CLASS = {
+    "Danger":      "alert--danger",
+    "Information": "alert--info",
+}
+
+
 # ── HTML rendering ─────────────────────────────────────────────────────────────
 
 CSS = """\
@@ -236,11 +256,22 @@ h1{font-size:17px;margin-bottom:2px}
 .radar-det[open] summary::before{content:"▾ "}
 .radar img{max-width:100%;border-radius:3px;display:block}
 .radar-link{font-size:11px;margin-top:2px}
+.park-alerts{margin-bottom:10px}
+.alert-group{margin-bottom:6px}
+.alert-group>summary{font-size:12px;font-weight:700;cursor:pointer;list-style:none;padding:3px 6px;border-radius:3px;border:1px solid;margin-bottom:3px}
+.alert-group>summary::-webkit-details-marker{display:none}
+.alert-group>summary::before{content:"▸ ";font-size:9px;font-weight:normal}
+.alert-group[open]>summary::before{content:"▾ "}
 .gen{font-size:10px;margin-top:8px}
 .notice{font-size:10px;margin-top:4px;opacity:0.6}
 @media(prefers-color-scheme:light){
   body{background:#fff;color:#111}
   .alert{background:#fff8e1;border-color:#e6a817}
+  .alert--danger{background:#fff0f0;border-color:#c44}
+  .alert--info{background:#f0f4ff;border-color:#6af}
+  .alert-group--danger>summary{background:#fff0f0;border-color:#c44;color:#a33}
+  .alert-group--notice>summary{background:#fff8e1;border-color:#e6a817}
+  .alert-group--info>summary{background:#f0f4ff;border-color:#6af}
   .period{background:#f6f6f6}
   .orig{color:#888}
 }
@@ -248,6 +279,11 @@ h1{font-size:17px;margin-bottom:2px}
   body{background:#111;color:#ddd}
   a{color:#7ab8f5}
   .alert{background:#2d1a00;border-color:#c87}
+  .alert--danger{background:#3d0000;border-color:#c44}
+  .alert--info{background:#001a2d;border-color:#5af}
+  .alert-group--danger>summary{background:#3d0000;border-color:#c44;color:#f88}
+  .alert-group--notice>summary{background:#2d1a00;border-color:#c87}
+  .alert-group--info>summary{background:#001a2d;border-color:#5af}
   .period{background:#1e1e1e}
   .orig{color:#777}
   .obs{border-color:#4a8}
@@ -279,7 +315,7 @@ a:hover{text-decoration:underline}
 """
 
 
-def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, current_temp_f, radar_id, generated_at, settings):
+def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, current_temp_f, radar_id, generated_at, settings, park_alerts=None):
     name = escape(loc["name"])
     elev_ft = loc["elevation_ft"]
     if not valid_radar_id(radar_id):
@@ -317,6 +353,59 @@ def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, curren
                 detail_html = ""
             items.append(f'<div class="alert"><a href="{url}">{event}</a>{detail_html}</div>')
         alerts_html = f'<div class="alerts">{"".join(items)}</div>\n'
+
+    # ── park alerts ──
+    park_alerts_html = ""
+    if settings.get("include-park-alerts", True) and park_alerts:
+        park_prefix = loc.get("park-code", "").upper()
+        _pfx = (park_prefix + " ") if park_prefix else ""
+        _GROUPS = [
+            ("alert--danger", "alert-group--danger", f"{_pfx}Danger",      True),
+            ("",              "alert-group--notice",  f"{_pfx}Notices",     False),
+            ("alert--info",   "alert-group--info",    f"{_pfx}Information", False),
+        ]
+        grouped = {}
+        for pa in park_alerts:
+            mod = PARK_ALERT_CLASS.get(pa.get("category", ""), "")
+            if mod not in grouped:
+                grouped[mod] = []
+            grouped[mod].append(pa)
+
+        group_parts = []
+        for mod, grp_cls, label, expanded in _GROUPS:
+            if mod not in grouped:
+                continue
+            items = []
+            for pa in grouped[mod]:
+                title = escape(pa.get("title", "Alert"))
+                url = escape(safe_url(pa.get("url") or ""))
+                alert_cls = ("alert " + mod).strip()
+                desc = pa.get("description") or ""
+                snip, rest = alert_split(desc)
+                if snip and rest:
+                    detail_html = (
+                        f'<details class="alert-det">'
+                        f'<summary>{snip}'
+                        f'<span class="alert-ell"> …</span>'
+                        f'<span class="alert-rest"> {rest}</span>'
+                        f'</summary>'
+                        f'</details>'
+                    )
+                elif snip:
+                    detail_html = f'<div class="alert-snip">{snip}</div>'
+                else:
+                    detail_html = ""
+                items.append(f'<div class="{alert_cls}"><a href="{url}">{title}</a>{detail_html}</div>')
+            count = len(items)
+            summary_text = f"{label} ({count})" if count > 1 else label
+            open_attr = " open" if expanded else ""
+            group_parts.append(
+                f'<details class="alert-group {grp_cls}"{open_attr}>'
+                f'<summary>{summary_text}</summary>'
+                f'{"".join(items)}'
+                f'</details>'
+            )
+        park_alerts_html = f'<div class="park-alerts">{"".join(group_parts)}</div>\n'
 
     # ── observations ──
     obs_html = ""
@@ -406,7 +495,7 @@ def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, curren
 <body>
 <h1>{name}</h1>
 <div class="meta">{elev_ft:,} ft &bull; Grid: {round(grid_elev_ft):,} ft &bull; Adj: {round(temp_offset):+d}&deg;F &bull; <a href="index.html">All locations</a></div>
-{alerts_html}{obs_html}{periods_html}{radar_html}<div class="gen">Updated: {ts}</div>
+{alerts_html}{park_alerts_html}{obs_html}{periods_html}{radar_html}<div class="gen">Updated: {ts}</div>
 <div class="notice">Data is provided as-is without guarantee of accuracy. Do not rely on this page as your sole source for safety decisions or local regulations.</div>
 </body>
 </html>"""
@@ -437,7 +526,7 @@ def render_index(locations, generated_at):
 
 # ── Build worker ──────────────────────────────────────────────────────────────
 
-def build_location(loc, cached, generated_at, out_dir, settings):
+def build_location(loc, cached, generated_at, out_dir, settings, nps_api_key=""):
     lat, lon    = loc["lat"], loc["lon"]
     office      = cached["office"]
     grid_x      = cached["grid_x"]
@@ -453,13 +542,16 @@ def build_location(loc, cached, generated_at, out_dir, settings):
     current_temp_f = round(c_to_f(grid_temp_c) + temp_offset) if grid_temp_c is not None else None
 
     forecast_url = f"https://api.weather.gov/gridpoints/{office}/{grid_x},{grid_y}/forecast"
-    periods = get_forecast(forecast_url)
-    alerts  = get_alerts(lat, lon)
-    obs     = get_observations(station_id) if (station_id and settings.get("include-observations", True)) else None
+    periods      = get_forecast(forecast_url)
+    alerts       = get_alerts(lat, lon)
+    obs          = get_observations(station_id) if (station_id and settings.get("include-observations", True)) else None
+    park_code    = loc.get("park-code", "")
+    park_alerts  = get_park_alerts(park_code, nps_api_key) if (settings.get("include-park-alerts", True) and park_code) else []
 
     page_html = render_location(
         loc, periods, alerts, obs,
         temp_offset, grid_elev_ft, current_temp_f, radar_id, generated_at, settings,
+        park_alerts=park_alerts,
     )
     out_path = out_dir / f"{loc['id']}.html"
     out_path.write_text(page_html, encoding="utf-8")
@@ -472,8 +564,11 @@ def build_location(loc, cached, generated_at, out_dir, settings):
 def main():
     with open("config.yaml") as f:
         config = yaml.safe_load(f)
-    settings  = config.get("settings", {})
-    locations = config["locations"]
+    settings     = config.get("settings", {})
+    locations    = config["locations"]
+    nps_api_key  = os.environ.get("NPS_API_KEY", "")
+    if settings.get("include-park-alerts", True) and not nps_api_key:
+        print("WARN: include-park-alerts is enabled but NPS_API_KEY is not set", file=sys.stderr)
 
     out_dir = Path("docs")
     out_dir.mkdir(exist_ok=True)
@@ -507,7 +602,7 @@ def main():
     built_locations = []
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = [
-            executor.submit(build_location, loc, cached, generated_at, out_dir, settings)
+            executor.submit(build_location, loc, cached, generated_at, out_dir, settings, nps_api_key)
             for loc, cached in work_items
         ]
         for future in futures:

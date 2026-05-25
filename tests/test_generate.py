@@ -4,12 +4,13 @@ Run with: py -3.14 -m pytest tests/
 """
 import pytest
 from datetime import datetime, timezone
+from unittest.mock import patch, MagicMock
 from generate import (
     c_to_f, mps_to_mph, deg_to_compass,
     safe_url, valid_radar_id,
     compute_temp_offset, adjust_period_temp, adjust_temps_in_text,
     alert_web_url, alert_split, get_current_grid_temp_c,
-    render_location,
+    get_park_alerts, render_location,
 )
 
 
@@ -323,7 +324,7 @@ def _period():
         "shortForecast": "Sunny",
     }
 
-def _render(settings, periods=None, radar_id="KMRX"):
+def _render(settings, periods=None, radar_id="KMRX", park_alerts=None):
     return render_location(
         loc={"name": "Test Peak", "elevation_ft": 5000},
         periods=periods or [_period() for _ in range(6)],
@@ -335,7 +336,15 @@ def _render(settings, periods=None, radar_id="KMRX"):
         radar_id=radar_id,
         generated_at=datetime.now(timezone.utc),
         settings=settings,
+        park_alerts=park_alerts or [],
     )
+
+
+def _park_alert(category="Caution", title="Trail Closure",
+                description="The trail is closed due to storm damage. Please use alternate routes and stay on designated trails at all times.",
+                url="https://www.nps.gov/grsm/planyourvisit/conditions.htm"):
+    return {"id": "abc123", "title": title, "description": description,
+            "category": category, "url": url, "parkCode": "grsm"}
 
 def test_render_radar_excluded():
     html = _render({"include-radar": False})
@@ -383,3 +392,110 @@ def test_render_notice_present():
     assert 'class="notice"' in html
     assert "without guarantee of accuracy" in html
     assert "sole source" in html
+
+
+# ── get_park_alerts ───────────────────────────────────────────────────────────
+
+def test_get_park_alerts_no_key_returns_empty():
+    assert get_park_alerts("grsm", "") == []
+
+def test_get_park_alerts_no_park_code_returns_empty():
+    assert get_park_alerts("", "somekey") == []
+
+def test_get_park_alerts_returns_data():
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"data": [{"title": "Bear Activity", "category": "Danger"}]}
+    with patch("generate.requests.get", return_value=mock_resp):
+        result = get_park_alerts("grsm", "testkey")
+    assert result == [{"title": "Bear Activity", "category": "Danger"}]
+
+def test_get_park_alerts_handles_error_gracefully():
+    with patch("generate.requests.get", side_effect=Exception("timeout")):
+        result = get_park_alerts("grsm", "testkey")
+    assert result == []
+
+
+# ── render_location park alerts ───────────────────────────────────────────────
+
+def test_render_park_alerts_excluded_by_setting():
+    html = _render({"include-park-alerts": False}, park_alerts=[_park_alert()])
+    assert "Trail Closure" not in html
+
+def test_render_park_alerts_included():
+    html = _render({"include-park-alerts": True}, park_alerts=[_park_alert()])
+    assert "Trail Closure" in html
+
+def test_render_park_alerts_empty_produces_no_section():
+    html = _render({"include-park-alerts": True}, park_alerts=[])
+    assert 'class="park-alerts"' not in html
+
+def test_render_park_alert_uses_nps_url():
+    html = _render({"include-park-alerts": True}, park_alerts=[_park_alert()])
+    assert "nps.gov" in html
+
+def test_render_park_alert_danger_class():
+    html = _render({"include-park-alerts": True}, park_alerts=[_park_alert(category="Danger")])
+    assert 'class="alert alert--danger"' in html
+
+def test_render_park_alert_closure_class():
+    html = _render({"include-park-alerts": True}, park_alerts=[_park_alert(category="Park Closure")])
+    assert 'class="alert"' in html
+
+def test_render_park_alert_info_class():
+    html = _render({"include-park-alerts": True}, park_alerts=[_park_alert(category="Information")])
+    assert 'class="alert alert--info"' in html
+
+def test_render_park_alert_caution_no_modifier():
+    html = _render({"include-park-alerts": True}, park_alerts=[_park_alert(category="Caution")])
+    assert 'class="alert alert--' not in html
+
+def test_render_park_alert_long_description_has_expand():
+    long_desc = "Storm damage has closed the trail. " + "Extra detail. " * 10
+    html = _render({"include-park-alerts": True}, park_alerts=[_park_alert(description=long_desc)])
+    assert 'class="alert-ell"' in html
+
+def test_render_park_alert_short_description_no_expand():
+    html = _render({"include-park-alerts": True}, park_alerts=[_park_alert(description="Short notice.")])
+    assert 'class="alert-ell"' not in html
+
+def test_render_park_alert_danger_group_is_open():
+    html = _render({"include-park-alerts": True}, park_alerts=[_park_alert(category="Danger")])
+    assert 'class="alert-group alert-group--danger" open' in html
+
+def test_render_park_alert_notice_group_is_collapsed():
+    html = _render({"include-park-alerts": True}, park_alerts=[_park_alert(category="Park Closure")])
+    assert 'class="alert-group alert-group--notice">' in html
+
+def test_render_park_alert_info_group_is_collapsed():
+    html = _render({"include-park-alerts": True}, park_alerts=[_park_alert(category="Information")])
+    assert 'class="alert-group alert-group--info">' in html
+
+def test_render_park_alerts_multiple_same_category_grouped():
+    alerts = [_park_alert(category="Danger", title="A"), _park_alert(category="Danger", title="B")]
+    html = _render({"include-park-alerts": True}, park_alerts=alerts)
+    assert "Danger (2)" in html
+    assert html.count('class="alert-group') == 1
+
+def test_render_park_alerts_mixed_categories_separate_groups():
+    alerts = [_park_alert(category="Danger"), _park_alert(category="Information")]
+    html = _render({"include-park-alerts": True}, park_alerts=alerts)
+    assert html.count('class="alert-group') == 2
+
+def test_render_park_alert_group_label_includes_park_code():
+    from generate import render_location
+    import datetime, pytz
+    loc = {"name": "Test Peak", "elevation_ft": 5000, "park-code": "grsm"}
+    html = render_location(
+        loc=loc,
+        periods=[_period() for _ in range(2)],
+        alerts=[],
+        obs=None,
+        temp_offset=0,
+        grid_elev_ft=5000,
+        current_temp_f=65,
+        radar_id="",
+        generated_at=datetime.datetime.now(pytz.utc),
+        settings={"include-park-alerts": True},
+        park_alerts=[_park_alert(category="Danger")],
+    )
+    assert "GRSM Danger" in html

@@ -1,6 +1,7 @@
 settings:
   include-radar: true
   include-observations: true
+  include-park-alerts: true
   periods-shown: 2      # periods always visible
   periods-more: 12      # additional periods behind the expand toggle (0 = no toggle)
 
@@ -10,18 +11,21 @@ locations:
     lat: 35.611002
     lon: -83.422888
     elevation_ft: 5046
+    park-code: grsm
 
   - id: pecks-corner-shelter
     name: Pecks Corner Shelter
     lat: 35.65083
     lon: -83.30848
     elevation_ft: 5281
+    park-code: grsm
 
   - id: cosby-knob-shelter
     name: Cosby Knob Shelter
     lat: 35.72828
     lon: -83.18219
     elevation_ft: 4723
+    park-code: grsm
 
   - id: pigeon-river-bridge
     name: Pigeon River Bridge
