@@ -278,12 +278,17 @@ a:hover{text-decoration:underline}
 """
 
 
-def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, current_temp_f, radar_id, generated_at):
+def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, current_temp_f, radar_id, generated_at, settings):
     name = escape(loc["name"])
     elev_ft = loc["elevation_ft"]
     if not valid_radar_id(radar_id):
         radar_id = ""
     ts = generated_at.astimezone(EASTERN).strftime("%Y-%m-%d %H:%M %Z")
+
+    include_obs   = settings.get("include-observations", True)
+    include_radar = settings.get("include-radar", True)
+    periods_shown = settings.get("periods-shown", 2)
+    periods_more  = settings.get("periods-more", 12)
 
     # ── alerts ──
     alerts_html = ""
@@ -314,22 +319,23 @@ def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, curren
 
     # ── observations ──
     obs_html = ""
-    parts = []
-    parts.append(
-        f'<span>Temp: <b>{current_temp_f}°F</b></span>'
-        if current_temp_f is not None else
-        '<span>Temp: <b>—</b></span>'
-    )
-    if obs:
-        wind_mph = mps_to_mph((obs.get("windSpeed") or {}).get("value"))
-        wind_dir = deg_to_compass((obs.get("windDirection") or {}).get("value"))
-        if wind_mph is not None:
-            parts.append(f'<span>Wind: <b>{wind_dir} {wind_mph} mph</b></span>')
-        sky = escape(obs.get("textDescription", "").strip())
-        if sky:
-            parts.append(f'<span>Sky: <b>{sky}</b></span>')
-    if parts:
-        obs_html = f'<div class="obs"><div class="obs-row">{"".join(parts)}</div></div>\n'
+    if include_obs:
+        parts = []
+        parts.append(
+            f'<span>Temp: <b>{current_temp_f}°F</b></span>'
+            if current_temp_f is not None else
+            '<span>Temp: <b>—</b></span>'
+        )
+        if obs:
+            wind_mph = mps_to_mph((obs.get("windSpeed") or {}).get("value"))
+            wind_dir = deg_to_compass((obs.get("windDirection") or {}).get("value"))
+            if wind_mph is not None:
+                parts.append(f'<span>Wind: <b>{wind_dir} {wind_mph} mph</b></span>')
+            sky = escape(obs.get("textDescription", "").strip())
+            if sky:
+                parts.append(f'<span>Sky: <b>{sky}</b></span>')
+        if parts:
+            obs_html = f'<div class="obs"><div class="obs-row">{"".join(parts)}</div></div>\n'
 
     # ── forecast periods ──
     if periods:
@@ -356,8 +362,9 @@ def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, curren
                 f'<div class="period-text">{adj_detail}</div>'
                 f'</div>'
             )
-        shown = "".join(all_items[:2])
-        extra = all_items[2:]
+        cap = periods_shown + periods_more if periods_more else periods_shown
+        shown = "".join(all_items[:periods_shown])
+        extra = all_items[periods_shown:cap] if periods_more else []
         if extra:
             n = len(extra)
             more = (
@@ -374,7 +381,7 @@ def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, curren
 
     # ── radar ──
     radar_html = ""
-    if radar_id:
+    if include_radar and radar_id:
         img_url = f"https://radar.weather.gov/ridge/standard/{radar_id}_0.gif"
         stn_url = f"https://radar.weather.gov/station/{radar_id}"
         radar_html = (
@@ -428,7 +435,7 @@ def render_index(locations, generated_at):
 
 # ── Build worker ──────────────────────────────────────────────────────────────
 
-def build_location(loc, cached, generated_at, out_dir):
+def build_location(loc, cached, generated_at, out_dir, settings):
     lat, lon    = loc["lat"], loc["lon"]
     office      = cached["office"]
     grid_x      = cached["grid_x"]
@@ -446,11 +453,11 @@ def build_location(loc, cached, generated_at, out_dir):
     forecast_url = f"https://api.weather.gov/gridpoints/{office}/{grid_x},{grid_y}/forecast"
     periods = get_forecast(forecast_url)
     alerts  = get_alerts(lat, lon)
-    obs     = get_observations(station_id) if station_id else None
+    obs     = get_observations(station_id) if (station_id and settings.get("include-observations", True)) else None
 
     page_html = render_location(
         loc, periods, alerts, obs,
-        temp_offset, grid_elev_ft, current_temp_f, radar_id, generated_at,
+        temp_offset, grid_elev_ft, current_temp_f, radar_id, generated_at, settings,
     )
     out_path = out_dir / f"{loc['id']}.html"
     out_path.write_text(page_html, encoding="utf-8")
@@ -461,8 +468,9 @@ def build_location(loc, cached, generated_at, out_dir):
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
-    with open("locations.yaml") as f:
+    with open("config.yaml") as f:
         config = yaml.safe_load(f)
+    settings  = config.get("settings", {})
     locations = config["locations"]
 
     out_dir = Path("docs")
@@ -497,7 +505,7 @@ def main():
     built_locations = []
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = [
-            executor.submit(build_location, loc, cached, generated_at, out_dir)
+            executor.submit(build_location, loc, cached, generated_at, out_dir, settings)
             for loc, cached in work_items
         ]
         for future in futures:
