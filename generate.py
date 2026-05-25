@@ -237,6 +237,7 @@ h1{font-size:17px;margin-bottom:2px}
 .radar img{max-width:100%;border-radius:3px;display:block}
 .radar-link{font-size:11px;margin-top:2px}
 .gen{font-size:10px;margin-top:8px}
+.notice{font-size:10px;margin-top:4px;opacity:0.6}
 @media(prefers-color-scheme:light){
   body{background:#fff;color:#111}
   .alert{background:#fff8e1;border-color:#e6a817}
@@ -406,6 +407,7 @@ def render_location(loc, periods, alerts, obs, temp_offset, grid_elev_ft, curren
 <h1>{name}</h1>
 <div class="meta">{elev_ft:,} ft &bull; Grid: {round(grid_elev_ft):,} ft &bull; Adj: {round(temp_offset):+d}&deg;F &bull; <a href="index.html">All locations</a></div>
 {alerts_html}{obs_html}{periods_html}{radar_html}<div class="gen">Updated: {ts}</div>
+<div class="notice">Data is provided as-is without guarantee of accuracy. Do not rely on this page as your sole source for safety decisions or local regulations.</div>
 </body>
 </html>"""
 

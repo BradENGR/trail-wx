@@ -377,3 +377,9 @@ def test_render_defaults_produce_valid_html():
     html = _render({})
     assert html.startswith("<!DOCTYPE html>")
     assert "</html>" in html
+
+def test_render_notice_present():
+    html = _render({})
+    assert 'class="notice"' in html
+    assert "without guarantee of accuracy" in html
+    assert "sole source" in html
