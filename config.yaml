@@ -3,7 +3,7 @@ settings:
   include-observations: true
   include-park-alerts: true
   periods-shown: 2      # periods always visible
-  periods-more: 12      # additional periods behind the expand toggle (0 = no toggle)
+  periods-more: 6      # additional periods behind the expand toggle (0 = no toggle)
 
 locations:
   - id: newfound-gap
