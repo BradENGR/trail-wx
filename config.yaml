@@ -29,3 +29,9 @@ locations:
     lat: 35.910367
     lon: -82.791164
     elevation_ft: 2960
+  
+  - id: allen-gap
+    name: Allen Gap
+    lat: 35.987050
+    lon: -82.785390
+    elevation_ft: 2226

@@ -54,5 +54,13 @@
     "grid_elevation_ft": 2480.0,
     "radar_id": "KMRX",
     "station_id": "KAVL"
+  },
+  "allen-gap": {
+    "office": "MRX",
+    "grid_x": 111,
+    "grid_y": 56,
+    "grid_elevation_ft": 2398.0,
+    "radar_id": "KMRX",
+    "station_id": "KGCY"
   }
 }
