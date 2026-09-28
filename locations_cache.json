@@ -30,5 +30,29 @@
     "grid_elevation_ft": 1601.0,
     "radar_id": "KMRX",
     "station_id": "K24A"
+  },
+  "max-patch-road": {
+    "office": "GSP",
+    "grid_x": 40,
+    "grid_y": 83,
+    "grid_elevation_ft": 4022.0,
+    "radar_id": "KMRX",
+    "station_id": "KAVL"
+  },
+  "hot-springs": {
+    "office": "GSP",
+    "grid_x": 44,
+    "grid_y": 87,
+    "grid_elevation_ft": 1457.0,
+    "radar_id": "KMRX",
+    "station_id": "KAVL"
+  },
+  "hurricane-gap": {
+    "office": "GSP",
+    "grid_x": 46,
+    "grid_y": 88,
+    "grid_elevation_ft": 2480.0,
+    "radar_id": "KMRX",
+    "station_id": "KAVL"
   }
 }

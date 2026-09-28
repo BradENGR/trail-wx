@@ -50,7 +50,7 @@ def fetch_static(loc):
 
 
 def main():
-    with open("locations.yaml") as f:
+    with open("config.yaml") as f:
         locations = yaml.safe_load(f)["locations"]
 
     cache_path = Path("locations_cache.json")
