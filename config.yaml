@@ -1,34 +1,31 @@
 settings:
   include-radar: true
   include-observations: true
-  include-park-alerts: true
+  include-park-alerts: false
   periods-shown: 2      # periods always visible
-  periods-more: 6      # additional periods behind the expand toggle (0 = no toggle)
+  periods-more: 10      # additional periods behind the expand toggle (0 = no toggle)
 
 locations:
-  - id: newfound-gap
-    name: Newfound Gap
-    lat: 35.611002
-    lon: -83.422888
-    elevation_ft: 5046
-    park-code: grsm
-
-  - id: pecks-corner-shelter
-    name: Pecks Corner Shelter
-    lat: 35.65083
-    lon: -83.30848
-    elevation_ft: 5281
-    park-code: grsm
-
-  - id: cosby-knob-shelter
-    name: Cosby Knob Shelter
-    lat: 35.72828
-    lon: -83.18219
-    elevation_ft: 4723
-    park-code: grsm
-
   - id: pigeon-river-bridge
     name: Pigeon River Bridge
     lat: 35.775598
     lon: -83.098306
     elevation_ft: 1357
+
+  - id: max-patch-road
+    name: Max Patch Road Tentsite
+    lat: 35.791980
+    lon: -82.961878
+    elevation_ft: 4254
+
+  - id: hot-springs
+    name: Hot Springs
+    lat: 35.892572
+    lon: -82.827789
+    elevation_ft: 1307
+
+  - id: hurricane-gap
+    name: Hurricane Gap
+    lat: 35.910367
+    lon: -82.791164
+    elevation_ft: 2960
